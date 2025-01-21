@@ -6,27 +6,33 @@ import base64
 import re
 import os
 import json
+
 import functools
 
-# 通常仅需要修改这里的配置
-# 初始化Elasticsearch客户端，如果Elasticsearch需要身份验证，可以在这里设置用户名和密码
+# 初始化Elasticsearch客户端
 
-ELASTICSEARCH_URL = "https://143.64.161.23:9200/"
+ELASTICSEARCH_URL = "https://xxx:9200/"
+#ELASTICSEARCH_URL = "http://es-test-es-http-ext:9200/"
 ELASTICSEARCH_USERNAME = "admin"
-ELASTICSEARCH_PASSWORD = "Jessie@Hunan.com3"
+ELASTICSEARCH_PASSWORD = "Jessie@123"
 
 es = Elasticsearch(
     [ELASTICSEARCH_URL],
-# ElasticSearch 不需要验证服务器证书   
+    # use_ssl=False,
     verify_certs=False,
-# ElasticSearch 不需要用户名和密码
     http_auth=(ELASTICSEARCH_USERNAME, ELASTICSEARCH_PASSWORD),
 )
 
+auth_whitelist_url = [
+    "api.github.com.*",
+    "api.enterprise.githubcopilot.com.*",
+    "api.busniess.githubcopilot.com.*",
+]
+
 allowed_patterns = [
-     # "https://.*",
-     "https://github.com/.*",
-     "https://api.githubcopilot.com/.*",
+    #  ".*",
+     "https://.*",
+     "https://github.com/$",
      "https://github.com/login.*",
      "https://vscode.dev/redirect.*",
      "https://github.com/settings/two_factor_checkup.*",
@@ -42,10 +48,12 @@ allowed_patterns = [
      "https://default.exp-tas.com/vscode/ab",
      "https://copilot-telemetry.githubusercontent.com/telemetry",
      "https://copilot-proxy.githubusercontent.com.*",
-     "https://*.githubcopilot.com/.*",
      "https://api.github.com/applications/[0-9a-fA-F]+/token",
      "https://api.githubcopilot.com/chat/completions.*",
-     "https://api.github.com/.*"
+     "https://api.github.com/.*",
+    #  "https://.*\\.githubcopilot\\.com.*",
+     "https://.*\\.business\\.githubcopilot\\.com.*",
+     "https://.*\\.enterprise\\.githubcopilot\\.com.*",
 ]
 
 # 身份验证函数
@@ -53,7 +61,7 @@ allowed_patterns = [
 #     # 在这里实现你的身份验证逻辑
 #     # 返回True表示验证通过，False表示验证失败
 #     return username == password
-def is_url_allowed(url: str) -> bool:
+def is_url_allowed(url: str, allowed_patterns) -> bool:
     for pattern in allowed_patterns:
         if re.match(pattern, url):
             return True
@@ -77,19 +85,21 @@ class AuthProxy:
 
     def http_connect(self, flow: http.HTTPFlow):
         proxy_auth = flow.request.headers.get("Proxy-Authorization", "")
+        url = flow.request.pretty_url
         # 如果没有代理授权头，返回401
-        if not proxy_auth:
+        if not proxy_auth and not is_url_allowed(url, auth_whitelist_url):
+            ctx.log.info("Proxy-Authorization: 401 failed " + url)
             flow.response = http.Response.make(401)
+
         ctx.log.info("Proxy-Authorization: " + proxy_auth.strip())
         if proxy_auth.strip() == "" :
-            flow.response = http.Response.make(401)
-        #    self.proxy_authorizations[(flow.client_conn.address[0])] = "daniel"
-        #    return
+            self.proxy_authorizations[(flow.client_conn.id)] = ""
+            return
         auth_type, auth_string = proxy_auth.split(" ", 1)
         auth_string = base64.b64decode(auth_string).decode("utf-8")
         username, password = auth_string.split(":")
         ctx.log.info("User: " + username + " Password: " + password)
-        # 验证用户名和密码
+
         if username in self.credentials:
             # If the username exists, check if the password is correct
             if self.credentials[username] != password:
@@ -101,13 +111,20 @@ class AuthProxy:
             ctx.log.info("Username: " + username + " does not exist.")
             flow.response = http.Response.make(401)
             return
+    
+
         ctx.log.info("Authenticated: " + flow.client_conn.address[0])
         self.proxy_authorizations[(flow.client_conn.address[0])] = username
     
     
     def request(self, flow: http.HTTPFlow):
-        if not is_url_allowed(flow.request.url):
+        if not is_url_allowed(flow.request.url, allowed_patterns):
             flow.response = http.Response.make(403, b"Forbidden", {"Content-Type": "text/html"})
+        # if flow.request.pretty_host.endswith("baidu.com"):
+        # # 修改请求的目的地址
+        #     flow.request.host = "52.253.115.203"
+        #     flow.request.scheme = "http"
+        #     flow.request.port = 8015
 
     def response(self, flow: http.HTTPFlow):
         # 异步将请求和响应存储到Elasticsearch
@@ -135,7 +152,7 @@ class AuthProxy:
         return json_objects
 
     async def save_to_elasticsearch(self, flow: http.HTTPFlow):
-        ctx.log.info("url: " + flow.request.url)
+        ctx.log.info("url to es: " + flow.request.url)
         if "complet"  in flow.request.url or "telemetry"  in flow.request.url:
             
             username = self.proxy_authorizations.get(flow.client_conn.address[0])
@@ -166,7 +183,7 @@ class AuthProxy:
             else:
                 request_content = flow.request.content.decode('utf-8', 'ignore')
                 json_objects = await self.split_jsons(request_content)
-
+                # print(json_objects)
                 for obj in json_objects:
                     ctx.log.info("obj: ===" + str(obj))
                     baseDataName = obj.get("data").get("baseData").get("name")
@@ -174,6 +191,8 @@ class AuthProxy:
                     accepted_charLens = 0
                     shown_numLines = 0
                     shown_charLens = 0
+                    ctx.log.info("baseDataName: === " + baseDataName)
+                    ctx.log.info("obj: ===" + str(obj))
                     if "hown" in baseDataName or "accepted" in baseDataName:
                         if "hown" in baseDataName:
                             shown_numLines = obj.get("data").get("baseData").get("measurements").get("numLines")

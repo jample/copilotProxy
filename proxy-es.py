@@ -31,7 +31,7 @@ auth_whitelist_url = [
 
 allowed_patterns = [
     #  ".*",
-    # "https://.*",
+     "https://.*",
      "https://github.com/$",
      "https://github.com/login.*",
      "https://vscode.dev/redirect.*",

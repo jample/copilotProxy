@@ -50,8 +50,7 @@ allowed_patterns = [
      "https://copilot-proxy.githubusercontent.com.*",
      "https://api.github.com/applications/[0-9a-fA-F]+/token",
      "https://api.githubcopilot.com/chat/completions.*",
-     "https://api.github.com/.*",
-    #  "https://.*\\.githubcopilot\\.com.*",
+      "https://.*\\.githubcopilot\\.com.*",
      "https://.*\\.business\\.githubcopilot\\.com.*",
      "https://.*\\.enterprise\\.githubcopilot\\.com.*",
 ]
